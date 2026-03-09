@@ -91,13 +91,13 @@ def get_schedule(year: int, month: int) -> list:
                 
                 results.append({
                     "date": date_str,
-                    "away_team": away_team,
-                    "home_team": home_team,
-                    "away_runs": away_runs,
-                    "home_runs": home_runs,
+                    "away_team": teams[1].text.strip(),  # swapped
+                    "home_team": teams[0].text.strip(),  # swapped
+                    "away_runs": runs[1].text.strip() if len(runs) > 1 else "",  # swapped
+                    "home_runs": runs[0].text.strip() if runs else "",  # swapped
                     "venue": venue,
                     "game_number": game_number,
-                })
+                    })
         break  # only process once since it's a single day page
     
     return results
@@ -144,13 +144,13 @@ def get_schedule_by_date(year: int, month: int, day: int) -> list:
             
             results.append({
                 "date": date_str,
-                "away_team": away_team,
-                "home_team": home_team,
-                "away_runs": away_runs,
-                "home_runs": home_runs,
+                "away_team": teams[1].text.strip(),  # swapped
+                "home_team": teams[0].text.strip(),  # swapped
+                "away_runs": runs[1].text.strip() if len(runs) > 1 else "",  # swapped
+                "home_runs": runs[0].text.strip() if runs else "",  # swapped
                 "venue": venue,
                 "game_number": game_number,
-            })
+                })
     
     return results
 
