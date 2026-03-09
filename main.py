@@ -155,6 +155,65 @@ def get_schedule_by_date(year: int, month: int, day: int) -> list:
     return results
 
 
+def get_batting_stats(season: int, team_code: str) -> dict:
+    url = f"https://npb.jp/bis/eng/{season}/stats/idb1_{team_code}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.content, "html.parser")
+    
+    # Get team name and league from title
+    title_div = soup.select_one("div#stdivtitle h1")
+    team_name = ""
+    if title_div:
+        team_name = title_div.text.strip().replace("\n", "").strip()
+    
+    league_tag = soup.select_one("div#stdivtitle h2")
+    league = league_tag.text.strip() if league_tag else ""
+    
+    players = []
+    for row in soup.select("tr.ststats"):
+        cells = row.find_all("td")
+        if len(cells) < 23:
+            continue
+        
+        name = cells[1].text.strip()
+        if not name:
+            continue
+            
+        players.append({
+            "name": name,
+            "games": cells[2].text.strip(),
+            "pa": cells[3].text.strip(),
+            "ab": cells[4].text.strip(),
+            "runs": cells[5].text.strip(),
+            "hits": cells[6].text.strip(),
+            "doubles": cells[7].text.strip(),
+            "triples": cells[8].text.strip(),
+            "hr": cells[9].text.strip(),
+            "tb": cells[10].text.strip(),
+            "rbi": cells[11].text.strip(),
+            "sb": cells[12].text.strip(),
+            "cs": cells[13].text.strip(),
+            "sh": cells[14].text.strip(),
+            "sf": cells[15].text.strip(),
+            "bb": cells[16].text.strip(),
+            "ibb": cells[17].text.strip(),
+            "hp": cells[18].text.strip(),
+            "so": cells[19].text.strip(),
+            "gdp": cells[20].text.strip(),
+            "avg": cells[21].text.strip(),
+            "slg": cells[22].text.strip(),
+            "obp": cells[23].text.strip(),
+        })
+    
+    return {
+        "team": team_name,
+        "league": league,
+        "players": players
+    }
+
+
 # ✅ Routes defined AFTER
 @app.get("/standings")
 def standings_current():
@@ -172,3 +231,6 @@ def schedule_by_month(year: int, month: int):
 def schedule_by_date(year: int, month: int, day: int):
     return get_schedule_by_date(year, month, day)
 
+@app.get("/stats/batting/{season}/{team_code}")
+def batting_stats(season: int, team_code: str):
+    return get_batting_stats(season, team_code)
