@@ -274,6 +274,104 @@ def get_pitching_stats(season: int, team_code: str) -> dict:
         "league": league,
         "pitchers": pitchers
     }
+    
+def get_batting_leaders(season: int, league: str) -> list:
+    # league: 'c' for Central, 'p' for Pacific
+    url = f"https://npb.jp/bis/eng/{season}/stats/bat_{league}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.content, "html.parser")
+    
+    players = []
+    for row in soup.select("tr.ststats"):
+        cells = row.find_all("td")
+        if len(cells) < 25:
+            continue
+        players.append({
+            "rank": cells[0].text.strip(),
+            "name": cells[1].text.strip(),
+            "team": cells[2].text.strip(),
+            "avg": cells[3].text.strip(),
+            "games": cells[4].text.strip(),
+            "pa": cells[5].text.strip(),
+            "ab": cells[6].text.strip(),
+            "runs": cells[7].text.strip(),
+            "hits": cells[8].text.strip(),
+            "doubles": cells[9].text.strip(),
+            "triples": cells[10].text.strip(),
+            "hr": cells[11].text.strip(),
+            "tb": cells[12].text.strip(),
+            "rbi": cells[13].text.strip(),
+            "sb": cells[14].text.strip(),
+            "cs": cells[15].text.strip(),
+            "sh": cells[16].text.strip(),
+            "sf": cells[17].text.strip(),
+            "bb": cells[18].text.strip(),
+            "ibb": cells[19].text.strip(),
+            "hp": cells[20].text.strip(),
+            "so": cells[21].text.strip(),
+            "gdp": cells[22].text.strip(),
+            "slg": cells[23].text.strip(),
+            "obp": cells[24].text.strip(),
+        })
+    
+    return players
+
+
+def get_pitching_leaders(season: int, league: str) -> dict:
+    url = f"https://npb.jp/bis/eng/{season}/stats/pit_{league}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.content, "html.parser")
+    
+    # Three tables: starters, closers, setuppers
+    tables = soup.select("table")
+    sections = ["starters", "closers", "setuppers"]
+    result = {}
+    
+    for i, table in enumerate(tables[:3]):
+        section = sections[i]
+        pitchers = []
+        for row in table.select("tr.ststats"):
+            cells = row.find_all("td")
+            if len(cells) < 24:
+                continue
+            
+            ip_whole = cells[13].text.strip()
+            ip_frac = cells[14].text.strip()
+            ip = f"{ip_whole}{ip_frac}" if ip_frac and ip_frac != "\xa0" else ip_whole
+            
+            pitchers.append({
+                "rank": cells[0].text.strip(),
+                "name": cells[1].text.strip(),
+                "team": cells[2].text.strip(),
+                "era": cells[3].text.strip(),
+                "games": cells[4].text.strip(),
+                "wins": cells[5].text.strip(),
+                "losses": cells[6].text.strip(),
+                "saves": cells[7].text.strip(),
+                "holds": cells[8].text.strip(),
+                "cg": cells[9].text.strip(),
+                "sho": cells[10].text.strip(),
+                "pct": cells[11].text.strip(),
+                "bf": cells[12].text.strip(),
+                "ip": ip,
+                "hits": cells[15].text.strip(),
+                "hr": cells[16].text.strip(),
+                "bb": cells[17].text.strip(),
+                "ibb": cells[18].text.strip(),
+                "hb": cells[19].text.strip(),
+                "so": cells[20].text.strip(),
+                "wp": cells[21].text.strip(),
+                "bk": cells[22].text.strip(),
+                "runs": cells[23].text.strip(),
+                "er": cells[24].text.strip(),
+            })
+        result[section] = pitchers
+    
+    return result
 
 
 # ✅ Routes defined AFTER
@@ -300,3 +398,11 @@ def batting_stats(season: int, team_code: str):
 @app.get("/stats/pitching/{season}/{team_code}")
 def pitching_stats(season: int, team_code: str):
     return get_pitching_stats(season, team_code)
+
+@app.get("/leaders/batting/{season}/{league}")
+def batting_leaders(season: int, league: str):
+    return get_batting_leaders(season, league)
+
+@app.get("/leaders/pitching/{season}/{league}")
+def pitching_leaders(season: int, league: str):
+    return get_pitching_leaders(season, league)
