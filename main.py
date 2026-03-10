@@ -641,6 +641,185 @@ def season_has_data(season: int) -> bool:
         return False
 
 
+def get_roster(team_code: str) -> dict:
+    try:
+        url = f"https://npb.jp/bis/eng/teams/rst_{team_code}.html"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Team name
+        title_tag = soup.select_one("td.tenametitle h1")
+        team_name = title_tag.text.strip() if title_tag else ""
+
+        result = {
+            "team": team_name,
+            "manager": [],
+            "pitchers": [],
+            "catchers": [],
+            "infielders": [],
+            "outfielders": [],
+            "developmental": [],
+        }
+
+        # We'll track which section we're in
+        current_section = None
+        is_developmental = False
+
+        for row in soup.select("tr"):
+            # Check for section header
+            header = row.select_one("th.rosterPos")
+            if header:
+                text = header.text.strip().upper()
+                if "MANAGER" in text:
+                    current_section = "manager"
+                    is_developmental = False
+                elif "PITCHER" in text:
+                    current_section = "pitchers"
+                elif "CATCHER" in text:
+                    current_section = "catchers"
+                elif "INFIELDER" in text:
+                    current_section = "infielders"
+                elif "OUTFIELDER" in text:
+                    current_section = "outfielders"
+                continue
+
+            # Check for developmental squad header
+            dev_header = soup.select_one("div.rosterSub h3")
+            if dev_header and "Developmental" in dev_header.text:
+                # We detect developmental by row position — use a different approach below
+                pass
+
+            # Player row
+            name_td = row.select_one("td.rosterRegister")
+            if not name_td or not current_section:
+                continue
+
+            cells = row.find_all("td")
+            if len(cells) < 2:
+                continue
+
+            number = cells[0].text.strip()
+            name_tag = name_td.find("a")
+            name = name_tag.text.strip() if name_tag else name_td.text.strip()
+
+            # Manager row only has number, name, born
+            if current_section == "manager":
+                born = cells[2].text.strip() if len(cells) > 2 else ""
+                player = {
+                    "number": number,
+                    "name": name,
+                    "born": born,
+                    "height": "",
+                    "weight": "",
+                    "throws": "",
+                    "bats": "",
+                    "note": "",
+                    "position": "Manager",
+                }
+            else:
+                born = cells[2].text.strip() if len(cells) > 2 else ""
+                height = cells[3].text.strip() if len(cells) > 3 else ""
+                weight = cells[4].text.strip() if len(cells) > 4 else ""
+                throws = cells[5].text.strip() if len(cells) > 5 else ""
+                bats = cells[6].text.strip() if len(cells) > 6 else ""
+                note_td = row.select_one("td.rosterdetail")
+                note = note_td.text.strip() if note_td else ""
+
+                pos_map = {
+                    "pitchers": "P",
+                    "catchers": "C",
+                    "infielders": "INF",
+                    "outfielders": "OF",
+                }
+
+                player = {
+                    "number": number,
+                    "name": name,
+                    "position": pos_map.get(current_section, ""),
+                    "born": born,
+                    "height": height,
+                    "weight": weight,
+                    "throws": throws,
+                    "bats": bats,
+                    "note": note,
+                }
+
+            result[current_section].append(player)
+
+        # Separate developmental squad — numbers >= 100 are typically dev squad
+        # Better: re-parse using div sections
+        all_sections = soup.select("div.rosterSub")
+        if all_sections:
+            # Find the developmental table — it comes after div.rosterSub
+            dev_div = all_sections[0]
+            dev_table = dev_div.find_next("table", class_="rosterlisttbl")
+            if dev_table:
+                dev_section = None
+                for row in dev_table.select("tr"):
+                    header = row.select_one("th.rosterPos")
+                    if header:
+                        text = header.text.strip().upper()
+                        if "PITCHER" in text:
+                            dev_section = "P"
+                        elif "CATCHER" in text:
+                            dev_section = "C"
+                        elif "INFIELDER" in text:
+                            dev_section = "INF"
+                        elif "OUTFIELDER" in text:
+                            dev_section = "OF"
+                        continue
+
+                    name_td = row.select_one("td.rosterRegister")
+                    if not name_td or not dev_section:
+                        continue
+
+                    cells = row.find_all("td")
+                    if len(cells) < 2:
+                        continue
+
+                    number = cells[0].text.strip()
+                    name_tag = name_td.find("a")
+                    name = name_tag.text.strip() if name_tag else name_td.text.strip()
+                    born = cells[2].text.strip() if len(cells) > 2 else ""
+                    height = cells[3].text.strip() if len(cells) > 3 else ""
+                    weight = cells[4].text.strip() if len(cells) > 4 else ""
+                    throws = cells[5].text.strip() if len(cells) > 5 else ""
+                    bats = cells[6].text.strip() if len(cells) > 6 else ""
+                    note_td = row.select_one("td.rosterdetail")
+                    note = note_td.text.strip() if note_td else ""
+
+                    result["developmental"].append(
+                        {
+                            "number": number,
+                            "name": name,
+                            "position": dev_section,
+                            "born": born,
+                            "height": height,
+                            "weight": weight,
+                            "throws": throws,
+                            "bats": bats,
+                            "note": note,
+                        }
+                    )
+
+        return result
+
+    except Exception as e:
+        print(f"Error getting roster for {team_code}: {e}")
+        return {
+            "team": "",
+            "manager": [],
+            "pitchers": [],
+            "catchers": [],
+            "infielders": [],
+            "outfielders": [],
+            "developmental": [],
+        }
+
+
 # ✅ Routes defined AFTER
 @app.get("/standings")
 def standings_current():
@@ -696,3 +875,8 @@ def pitching_leaders(season: int, league: str):
 @app.get("/boxscore/{season}/{game_id}")
 def box_score(season: int, game_id: str):
     return get_box_score(season, game_id)
+
+
+@app.get("/roster/{team_code}")
+def roster(team_code: str):
+    return get_roster(team_code)
