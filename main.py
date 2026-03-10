@@ -139,7 +139,9 @@ def get_schedule_by_date(year: int, month: int, day: int) -> list:
             if i < len(info_rows):
                 info_cells = info_rows[i].select("td.contentsinfo")
                 if len(info_cells) >= 2:
+                    game_link_tag = info_cells[0].find("a")
                     game_number = info_cells[0].text.strip()
+                    game_id = game_link_tag["href"].replace(".html", "") if game_link_tag else ""
                     venue = info_cells[1].text.strip()
             
             results.append({
@@ -150,6 +152,7 @@ def get_schedule_by_date(year: int, month: int, day: int) -> list:
                 "home_runs": runs[0].text.strip() if runs else "",  # swapped
                 "venue": venue,
                 "game_number": game_number,
+                "game_id": game_id,
                 })
     
     return results
@@ -373,6 +376,179 @@ def get_pitching_leaders(season: int, league: str) -> dict:
     
     return result
 
+def get_box_score(season: int, game_id: str) -> dict:
+    url = f"https://npb.jp/bis/eng/{season}/games/{game_id}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.content, "html.parser")
+    
+    # Date
+    date_tag = soup.select_one("div#gmdivtitle h1")
+    date_str = date_tag.text.strip() if date_tag else ""
+    
+    # Venue and attendance
+    info_div = soup.select_one("div#gmdivinfo")
+    venue = ""
+    attendance = ""
+    if info_div:
+        tds = info_div.find_all("td")
+        if tds:
+            venue = tds[0].text.strip()
+        if len(tds) > 1:
+            full_info = tds[1].text.strip()
+            if "Att." in full_info:
+                att_start = full_info.index("Att.")
+                attendance = full_info[att_start:].strip()
+
+    # Game number
+    game_num_div = soup.select_one("div.gmdivnumber")
+    game_number = game_num_div.text.strip() if game_num_div else ""
+    
+    # Score summary — get unique teams only, max 2
+    teams_summary = []
+    score_div = soup.select_one("div#gmdivscore")
+    if score_div:
+        for row in score_div.select("tr"):
+            name_td = row.select_one("td.contentshdname")
+            run_td = row.select_one("td.gmboxrun")
+            if name_td and run_td:
+                entry = {
+                    "team": name_td.text.strip(),
+                    "runs": run_td.text.strip()
+                }
+                if entry not in teams_summary:
+                    teams_summary.append(entry)
+    
+    # Line score
+    line_score = []
+    result_table = soup.select_one("div#gmdivresult table")
+    if result_table:
+        rows = result_table.select("tr")
+        for row in rows[1:]:
+            cells = row.find_all("td")
+            if not cells:
+                continue
+            team_name = cells[0].text.strip()
+            innings = [c.text.strip() for c in cells[1:-3]]
+            r = cells[-3].text.strip()
+            h = cells[-2].text.strip()
+            e = cells[-1].text.strip()
+            line_score.append({
+                "team": team_name,
+                "innings": innings,
+                "r": r,
+                "h": h,
+                "e": e
+            })
+    
+    # WP/LP
+    wp = ""
+    lp = ""
+    pit_div = soup.select_one("div#gmdivpit")
+    if pit_div:
+        for row in pit_div.select("tr"):
+            label = row.select_one("td.gmresunm")
+            value = row.select_one("td.gmresults")
+            if label and value:
+                if "WP" in label.text:
+                    wp = value.text.strip()
+                elif "LP" in label.text:
+                    lp = value.text.strip()
+    
+    # HR
+    hr = ""
+    hr_div = soup.select_one("div#gmdivhr")
+    if hr_div:
+        hr_val = hr_div.select_one("td.gmresults")
+        if hr_val:
+            hr = hr_val.text.strip()
+    
+    # Team names from box score headers — exactly 2
+    team_headers = [th.text.strip() for th in soup.select("td.gmtblteam")][:2]
+    
+    # Get the main box score table container
+    gmdivtbl = soup.select_one("div#gmdivtbl")
+    
+    # Batting and pitching tables are side by side in td.gmcolorsub
+    batting_boxes = []
+    pitching_boxes = []
+    
+    if gmdivtbl:
+        # Each team's data is in a td.gmcolorsub column
+        columns = gmdivtbl.select("td.gmcolorsub")
+        
+        # Columns come in pairs: [away_batter, home_batter, away_pitcher, home_pitcher]
+        # But actually layout is: top row has team headers, 
+        # middle row has batting side by side, bottom row has pitching side by side
+        
+        batter_cols = []
+        pitcher_cols = []
+        
+        for col in columns:
+            has_batters = bool(col.select("td.gmbatter"))
+            has_pitchers = bool(col.select("td.gmpitcher"))
+            if has_batters:
+                batter_cols.append(col)
+            elif has_pitchers:
+                pitcher_cols.append(col)
+        
+        # Batting boxes — only use gmbatter rows, not gmnxtbatter
+        for i, col in enumerate(batter_cols[:2]):
+            team_name = team_headers[i] if i < len(team_headers) else ""
+            batters = []
+            for row in col.select("tr.gmstats"):
+                name_td = row.select_one("td.gmbatter, td.gmnxtbatter")
+                cells = row.find_all("td")
+                if name_td and len(cells) >= 7:
+                    batters.append({
+                        "name": cells[0].text.strip(),
+                        "ab": cells[1].text.strip(),
+                        "h": cells[2].text.strip(),
+                        "rbi": cells[3].text.strip(),
+                        "bb": cells[4].text.strip(),
+                        "hp": cells[5].text.strip(),
+                        "so": cells[6].text.strip(),
+                    })
+            batting_boxes.append({"team": team_name, "batters": batters})
+        
+        # Pitching boxes
+        for i, col in enumerate(pitcher_cols[:2]):
+            team_name = team_headers[i] if i < len(team_headers) else ""
+            pitchers = []
+            for row in col.select("tr.gmstats"):
+                name_td = row.select_one("td.gmpitcher")
+                cells = row.find_all("td")
+                if name_td and len(cells) >= 9:
+                    ip_whole = cells[1].text.strip()
+                    ip_frac = cells[2].text.strip()
+                    ip = f"{ip_whole}{ip_frac}" if ip_frac and ip_frac != "\xa0" else ip_whole
+                    pitchers.append({
+                        "name": cells[0].text.strip(),
+                        "ip": ip,
+                        "bf": cells[3].text.strip(),
+                        "h": cells[4].text.strip(),
+                        "bb": cells[5].text.strip(),
+                        "hb": cells[6].text.strip(),
+                        "so": cells[7].text.strip(),
+                        "er": cells[8].text.strip(),
+                    })
+            pitching_boxes.append({"team": team_name, "pitchers": pitchers})
+    
+    return {
+        "date": date_str,
+        "venue": venue,
+        "attendance": attendance,
+        "game_number": game_number,
+        "teams": teams_summary,
+        "line_score": line_score,
+        "wp": wp,
+        "lp": lp,
+        "hr": hr,
+        "batting": batting_boxes,
+        "pitching": pitching_boxes,
+    }
+    
 
 # ✅ Routes defined AFTER
 @app.get("/standings")
@@ -406,3 +582,7 @@ def batting_leaders(season: int, league: str):
 @app.get("/leaders/pitching/{season}/{league}")
 def pitching_leaders(season: int, league: str):
     return get_pitching_leaders(season, league)
+
+@app.get("/boxscore/{season}/{game_id}")
+def box_score(season: int, game_id: str):
+    return get_box_score(season, game_id)
