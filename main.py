@@ -212,6 +212,68 @@ def get_batting_stats(season: int, team_code: str) -> dict:
         "league": league,
         "players": players
     }
+    
+def get_pitching_stats(season: int, team_code: str) -> dict:
+    url = f"https://npb.jp/bis/eng/{season}/stats/idp1_{team_code}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.content, "html.parser")
+    
+    title_div = soup.select_one("div#stdivtitle h1")
+    team_name = title_div.text.strip().replace("\n", "").strip() if title_div else ""
+    
+    league_tag = soup.select_one("div#stdivtitle h2")
+    league = league_tag.text.strip() if league_tag else ""
+    
+    pitchers = []
+    for row in soup.select("tr.ststats"):
+        cells = row.find_all("td")
+        if len(cells) < 24:
+            continue
+        
+        name = cells[1].text.strip()
+        if not name:
+            continue
+        
+        # IP is split across two cells - combine them
+        ip_whole = cells[11].text.strip()
+        ip_frac = cells[12].text.strip()
+        if ip_frac and ip_frac != "\xa0":
+            ip = f"{ip_whole}{ip_frac}"
+        else:
+            ip = ip_whole
+        
+        pitchers.append({
+            "name": name,
+            "games": cells[2].text.strip(),
+            "wins": cells[3].text.strip(),
+            "losses": cells[4].text.strip(),
+            "saves": cells[5].text.strip(),
+            "holds": cells[6].text.strip(),
+            "cg": cells[7].text.strip(),
+            "sho": cells[8].text.strip(),
+            "pct": cells[9].text.strip(),
+            "bf": cells[10].text.strip(),
+            "ip": ip,
+            "hits": cells[13].text.strip(),
+            "hr": cells[14].text.strip(),
+            "bb": cells[15].text.strip(),
+            "ibb": cells[16].text.strip(),
+            "hb": cells[17].text.strip(),
+            "so": cells[18].text.strip(),
+            "wp": cells[19].text.strip(),
+            "bk": cells[20].text.strip(),
+            "runs": cells[21].text.strip(),
+            "er": cells[22].text.strip(),
+            "era": cells[23].text.strip(),
+        })
+    
+    return {
+        "team": team_name,
+        "league": league,
+        "pitchers": pitchers
+    }
 
 
 # ✅ Routes defined AFTER
@@ -234,3 +296,7 @@ def schedule_by_date(year: int, month: int, day: int):
 @app.get("/stats/batting/{season}/{team_code}")
 def batting_stats(season: int, team_code: str):
     return get_batting_stats(season, team_code)
+
+@app.get("/stats/pitching/{season}/{team_code}")
+def pitching_stats(season: int, team_code: str):
+    return get_pitching_stats(season, team_code)
