@@ -707,6 +707,7 @@ def get_roster(team_code: str) -> dict:
                     {
                         "number": number,
                         "name": name,
+                        "player_id": "",
                         "position": "Manager",
                         "born": born,
                         "height": "",
