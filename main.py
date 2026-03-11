@@ -1,4 +1,5 @@
 import requests
+import re
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from fastapi import FastAPI
@@ -826,100 +827,114 @@ def get_player(player_id: str) -> dict:
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, "html.parser")
 
-        # Name and team
+        # Name, number, team — in div#pc_v_name
+        number = ""
         name = ""
         team = ""
-        number = ""
-        name_items = soup.select("ul li")
-        for item in name_items[:3]:
-            text = item.text.strip()
-            if text.isdigit():
-                number = text
-            elif any(
-                x in text
-                for x in [
-                    "Giants",
-                    "Tigers",
-                    "BayStars",
-                    "Carp",
-                    "Swallows",
-                    "Dragons",
-                    "Hawks",
-                    "Fighters",
-                    "Buffaloes",
-                    "Eagles",
-                    "Lions",
-                    "Marines",
-                ]
-            ):
-                team = text
-            else:
-                name = text
+        name_div = soup.select_one("div#pc_v_name")
+        if name_div:
+            items = name_div.select("ul li")
+            for item in items:
+                text = item.text.strip()
+                if re.match(r"^\d+$", text):
+                    number = text
+                elif any(
+                    x in text
+                    for x in [
+                        "Giants",
+                        "Tigers",
+                        "BayStars",
+                        "Carp",
+                        "Swallows",
+                        "Dragons",
+                        "Hawks",
+                        "Fighters",
+                        "Buffaloes",
+                        "Eagles",
+                        "Lions",
+                        "Marines",
+                    ]
+                ):
+                    team = text
+                elif text and len(text) > 1:
+                    name = text
 
-        # Bio table
+        # Photo URL
+        photo_tag = soup.find("img", src=lambda s: s and "players_photo" in s)
+        if photo_tag:
+            src = photo_tag["src"]
+            photo_url = src if src.startswith("http") else f"https://p.npb.jp{src}"
+        else:
+            photo_url = ""
+
+        # Bio — first table on page, uses <th> for labels
         position = ""
         bats_throws = ""
         height_weight = ""
         born = ""
-        bio_table = soup.select_one("table")
-        if bio_table:
+        all_tables = soup.select("table")
+        if all_tables:
+            bio_table = all_tables[0]
             for row in bio_table.select("tr"):
-                cells = row.find_all("td")
-                if len(cells) == 2:
-                    label = cells[0].text.strip()
-                    value = cells[1].text.strip()
-                    if "Position" in label:
+                th = row.find("th")
+                td = row.find("td")
+                if th and td:
+                    label = th.text.strip()
+                    value = td.text.strip()
+                    if label == "Position":
                         position = value
-                    elif "Bats" in label:
+                    elif label == "Bats / Throws":
                         bats_throws = value
-                    elif "Height" in label:
+                    elif label == "Height / Weight":
                         height_weight = value
-                    elif "Born" in label:
+                    elif label == "Born":
                         born = value
 
-        # Photo URL — derive from page
-        photo_tag = soup.find("img", src=lambda s: s and "players_photo" in s)
-        photo_url = f"https://p.npb.jp{photo_tag['src']}" if photo_tag else ""
+        # Build IP lookup from table.table_inning elements
+        ip_values = []
+        for t in soup.select("table.table_inning"):
+            whole = t.select_one("th")
+            frac = t.select_one("td")
+            whole_str = whole.text.strip() if whole else ""
+            frac_str = frac.text.strip() if frac else ""
+            frac_str = frac_str if frac_str in [".1", ".2"] else ""
+            ip_values.append(f"{whole_str}{frac_str}")
 
-        # Career stats tables — first is pitching, second is batting
-        all_tables = soup.select("table")
-        # Skip the bio table (first one), get stats tables
-        stats_tables = [
-            t
-            for t in all_tables
-            if t.select("tr") and any("Year" in th.text for th in t.select("th"))
-        ]
+        # Remove table_inning from DOM so they don't add extra cells
+        for t in soup.select("table.table_inning"):
+            t.decompose()
 
+        # Stats tables
         pitching_stats = []
         batting_stats = []
+        pitching_ip_index = 0
 
-        for table in stats_tables:
-            headers_row = table.select_one("tr")
-            if not headers_row:
+        for table in soup.select("table"):
+            header_cells = table.select("thead tr th")
+            if not header_cells:
                 continue
-            headers = [th.text.strip() for th in headers_row.select("th")]
-            if not headers:
+            headers = [th.text.strip() for th in header_cells]
+            if "Year" not in headers:
                 continue
 
             is_pitching = "ERA" in headers
             is_batting = "AVG" in headers
 
-            for row in table.select("tr")[1:]:  # skip header
+            for row in table.select("tbody tr"):
                 cells = row.find_all("td")
                 if not cells or len(cells) < 3:
                     continue
                 year = cells[0].text.strip()
-                if not year:
+                if not year or not re.match(r"^\d{4}$", year):
                     continue
 
-                if is_pitching and len(cells) >= 22:
-                    ip_whole = cells[11].text.strip()
-                    ip_frac = cells[12].text.strip()
+                if is_pitching:
                     ip = (
-                        f"{ip_whole}{ip_frac}"
-                        if ip_frac and ip_frac not in ["\xa0", ""]
-                        else ip_whole
+                        ip_values[pitching_ip_index]
+                        if pitching_ip_index < len(ip_values)
+                        else ""
                     )
+                    pitching_ip_index += 1
                     pitching_stats.append(
                         {
                             "year": year,
@@ -933,8 +948,9 @@ def get_player(player_id: str) -> dict:
                             "cg": cells[8].text.strip(),
                             "sho": cells[9].text.strip(),
                             "pct": cells[10].text.strip(),
-                            "bf": cells[11].text.strip() if len(cells) > 11 else "",
+                            "bf": cells[11].text.strip(),
                             "ip": ip,
+                            # cells[12] is the now-empty IP cell, skip it
                             "h": cells[13].text.strip(),
                             "hr": cells[14].text.strip(),
                             "bb": cells[15].text.strip(),
@@ -947,7 +963,8 @@ def get_player(player_id: str) -> dict:
                             "era": cells[22].text.strip() if len(cells) > 22 else "",
                         }
                     )
-                elif is_batting and len(cells) >= 21:
+
+                elif is_batting:
                     batting_stats.append(
                         {
                             "year": year,
@@ -1072,3 +1089,18 @@ def roster(team_code: str):
 @app.get("/player/{player_id}")
 def player(player_id: str):
     return get_player(player_id)
+
+
+# @app.get("/debug2/player/{player_id}")
+# def debug2_player(player_id: str):
+#     url = f"https://npb.jp/bis/eng/players/{player_id}.html"
+#     headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+#     response = requests.get(url, headers=headers, timeout=10)
+#     soup = BeautifulSoup(response.content, "html.parser")
+
+#     # Dump all tables and their contents
+#     tables = soup.select("table")
+#     result = []
+#     for i, table in enumerate(tables):
+#         result.append({"index": i, "html": str(table)[:500]})
+#     return {"table_count": len(tables), "tables": result}
