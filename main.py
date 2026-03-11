@@ -664,18 +664,16 @@ def get_roster(team_code: str) -> dict:
             "developmental": [],
         }
 
-        # We'll track which section we're in
+        # Only parse the main roster table (first rosterlisttbl)
+        main_table = soup.select("table.rosterlisttbl")[0]
         current_section = None
-        is_developmental = False
 
-        for row in soup.select("tr"):
-            # Check for section header
+        for row in main_table.select("tr"):
             header = row.select_one("th.rosterPos")
             if header:
                 text = header.text.strip().upper()
                 if "MANAGER" in text:
                     current_section = "manager"
-                    is_developmental = False
                 elif "PITCHER" in text:
                     current_section = "pitchers"
                 elif "CATCHER" in text:
@@ -686,13 +684,6 @@ def get_roster(team_code: str) -> dict:
                     current_section = "outfielders"
                 continue
 
-            # Check for developmental squad header
-            dev_header = soup.select_one("div.rosterSub h3")
-            if dev_header and "Developmental" in dev_header.text:
-                # We detect developmental by row position — use a different approach below
-                pass
-
-            # Player row
             name_td = row.select_one("td.rosterRegister")
             if not name_td or not current_section:
                 continue
@@ -705,20 +696,21 @@ def get_roster(team_code: str) -> dict:
             name_tag = name_td.find("a")
             name = name_tag.text.strip() if name_tag else name_td.text.strip()
 
-            # Manager row only has number, name, born
             if current_section == "manager":
                 born = cells[2].text.strip() if len(cells) > 2 else ""
-                player = {
-                    "number": number,
-                    "name": name,
-                    "born": born,
-                    "height": "",
-                    "weight": "",
-                    "throws": "",
-                    "bats": "",
-                    "note": "",
-                    "position": "Manager",
-                }
+                result["manager"].append(
+                    {
+                        "number": number,
+                        "name": name,
+                        "position": "Manager",
+                        "born": born,
+                        "height": "",
+                        "weight": "",
+                        "throws": "",
+                        "bats": "",
+                        "note": "",
+                    }
+                )
             else:
                 born = cells[2].text.strip() if len(cells) > 2 else ""
                 height = cells[3].text.strip() if len(cells) > 3 else ""
@@ -734,20 +726,19 @@ def get_roster(team_code: str) -> dict:
                     "infielders": "INF",
                     "outfielders": "OF",
                 }
-
-                player = {
-                    "number": number,
-                    "name": name,
-                    "position": pos_map.get(current_section, ""),
-                    "born": born,
-                    "height": height,
-                    "weight": weight,
-                    "throws": throws,
-                    "bats": bats,
-                    "note": note,
-                }
-
-            result[current_section].append(player)
+                result[current_section].append(
+                    {
+                        "number": number,
+                        "name": name,
+                        "position": pos_map.get(current_section, ""),
+                        "born": born,
+                        "height": height,
+                        "weight": weight,
+                        "throws": throws,
+                        "bats": bats,
+                        "note": note,
+                    }
+                )
 
         # Separate developmental squad — numbers >= 100 are typically dev squad
         # Better: re-parse using div sections
