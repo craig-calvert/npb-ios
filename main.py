@@ -695,6 +695,10 @@ def get_roster(team_code: str) -> dict:
             number = cells[0].text.strip()
             name_tag = name_td.find("a")
             name = name_tag.text.strip() if name_tag else name_td.text.strip()
+            player_id = ""
+            if name_tag and name_tag.get("href"):
+                # href is like /bis/eng/players/31135138.html
+                player_id = name_tag["href"].split("/")[-1].replace(".html", "")
 
             if current_section == "manager":
                 born = cells[2].text.strip() if len(cells) > 2 else ""
@@ -730,6 +734,7 @@ def get_roster(team_code: str) -> dict:
                     {
                         "number": number,
                         "name": name,
+                        "player_id": player_id,
                         "position": pos_map.get(current_section, ""),
                         "born": born,
                         "height": height,
@@ -786,6 +791,7 @@ def get_roster(team_code: str) -> dict:
                         {
                             "number": number,
                             "name": name,
+                            "player_id": player_id,
                             "position": dev_section,
                             "born": born,
                             "height": height,
@@ -808,6 +814,196 @@ def get_roster(team_code: str) -> dict:
             "infielders": [],
             "outfielders": [],
             "developmental": [],
+        }
+
+
+def get_player(player_id: str) -> dict:
+    try:
+        url = f"https://npb.jp/bis/eng/players/{player_id}.html"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Name and team
+        name = ""
+        team = ""
+        number = ""
+        name_items = soup.select("ul li")
+        for item in name_items[:3]:
+            text = item.text.strip()
+            if text.isdigit():
+                number = text
+            elif any(
+                x in text
+                for x in [
+                    "Giants",
+                    "Tigers",
+                    "BayStars",
+                    "Carp",
+                    "Swallows",
+                    "Dragons",
+                    "Hawks",
+                    "Fighters",
+                    "Buffaloes",
+                    "Eagles",
+                    "Lions",
+                    "Marines",
+                ]
+            ):
+                team = text
+            else:
+                name = text
+
+        # Bio table
+        position = ""
+        bats_throws = ""
+        height_weight = ""
+        born = ""
+        bio_table = soup.select_one("table")
+        if bio_table:
+            for row in bio_table.select("tr"):
+                cells = row.find_all("td")
+                if len(cells) == 2:
+                    label = cells[0].text.strip()
+                    value = cells[1].text.strip()
+                    if "Position" in label:
+                        position = value
+                    elif "Bats" in label:
+                        bats_throws = value
+                    elif "Height" in label:
+                        height_weight = value
+                    elif "Born" in label:
+                        born = value
+
+        # Photo URL — derive from page
+        photo_tag = soup.find("img", src=lambda s: s and "players_photo" in s)
+        photo_url = f"https://p.npb.jp{photo_tag['src']}" if photo_tag else ""
+
+        # Career stats tables — first is pitching, second is batting
+        all_tables = soup.select("table")
+        # Skip the bio table (first one), get stats tables
+        stats_tables = [
+            t
+            for t in all_tables
+            if t.select("tr") and any("Year" in th.text for th in t.select("th"))
+        ]
+
+        pitching_stats = []
+        batting_stats = []
+
+        for table in stats_tables:
+            headers_row = table.select_one("tr")
+            if not headers_row:
+                continue
+            headers = [th.text.strip() for th in headers_row.select("th")]
+            if not headers:
+                continue
+
+            is_pitching = "ERA" in headers
+            is_batting = "AVG" in headers
+
+            for row in table.select("tr")[1:]:  # skip header
+                cells = row.find_all("td")
+                if not cells or len(cells) < 3:
+                    continue
+                year = cells[0].text.strip()
+                if not year:
+                    continue
+
+                if is_pitching and len(cells) >= 22:
+                    ip_whole = cells[11].text.strip()
+                    ip_frac = cells[12].text.strip()
+                    ip = (
+                        f"{ip_whole}{ip_frac}"
+                        if ip_frac and ip_frac not in ["\xa0", ""]
+                        else ip_whole
+                    )
+                    pitching_stats.append(
+                        {
+                            "year": year,
+                            "team": cells[1].text.strip(),
+                            "g": cells[2].text.strip(),
+                            "w": cells[3].text.strip(),
+                            "l": cells[4].text.strip(),
+                            "sv": cells[5].text.strip(),
+                            "hld": cells[6].text.strip(),
+                            "hp": cells[7].text.strip(),
+                            "cg": cells[8].text.strip(),
+                            "sho": cells[9].text.strip(),
+                            "pct": cells[10].text.strip(),
+                            "bf": cells[11].text.strip() if len(cells) > 11 else "",
+                            "ip": ip,
+                            "h": cells[13].text.strip(),
+                            "hr": cells[14].text.strip(),
+                            "bb": cells[15].text.strip(),
+                            "hb": cells[16].text.strip(),
+                            "so": cells[17].text.strip(),
+                            "wp": cells[18].text.strip(),
+                            "bk": cells[19].text.strip(),
+                            "r": cells[20].text.strip(),
+                            "er": cells[21].text.strip(),
+                            "era": cells[22].text.strip() if len(cells) > 22 else "",
+                        }
+                    )
+                elif is_batting and len(cells) >= 21:
+                    batting_stats.append(
+                        {
+                            "year": year,
+                            "team": cells[1].text.strip(),
+                            "g": cells[2].text.strip(),
+                            "pa": cells[3].text.strip(),
+                            "ab": cells[4].text.strip(),
+                            "r": cells[5].text.strip(),
+                            "h": cells[6].text.strip(),
+                            "doubles": cells[7].text.strip(),
+                            "triples": cells[8].text.strip(),
+                            "hr": cells[9].text.strip(),
+                            "tb": cells[10].text.strip(),
+                            "rbi": cells[11].text.strip(),
+                            "sb": cells[12].text.strip(),
+                            "cs": cells[13].text.strip(),
+                            "sh": cells[14].text.strip(),
+                            "sf": cells[15].text.strip(),
+                            "bb": cells[16].text.strip(),
+                            "hp": cells[17].text.strip(),
+                            "so": cells[18].text.strip(),
+                            "gdp": cells[19].text.strip(),
+                            "avg": cells[20].text.strip(),
+                            "slg": cells[21].text.strip() if len(cells) > 21 else "",
+                            "obp": cells[22].text.strip() if len(cells) > 22 else "",
+                        }
+                    )
+
+        return {
+            "player_id": player_id,
+            "number": number,
+            "name": name,
+            "team": team,
+            "position": position,
+            "bats_throws": bats_throws,
+            "height_weight": height_weight,
+            "born": born,
+            "photo_url": photo_url,
+            "pitching_stats": pitching_stats,
+            "batting_stats": batting_stats,
+        }
+
+    except Exception as e:
+        print(f"Error getting player {player_id}: {e}")
+        return {
+            "player_id": player_id,
+            "number": "",
+            "name": "",
+            "team": "",
+            "position": "",
+            "bats_throws": "",
+            "height_weight": "",
+            "born": "",
+            "photo_url": "",
+            "pitching_stats": [],
+            "batting_stats": [],
         }
 
 
@@ -871,3 +1067,8 @@ def box_score(season: int, game_id: str):
 @app.get("/roster/{team_code}")
 def roster(team_code: str):
     return get_roster(team_code)
+
+
+@app.get("/player/{player_id}")
+def player(player_id: str):
+    return get_player(player_id)
