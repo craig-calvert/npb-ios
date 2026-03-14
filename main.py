@@ -9,6 +9,11 @@ app = FastAPI()
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"])
 
+# Simple in-memory cache
+_players_cache = None
+_players_cache_time = None
+CACHE_DURATION = timedelta(hours=6)
+
 
 # ✅ Function defined FIRST
 def get_standings(season: int = 2026) -> dict:
@@ -1090,6 +1095,38 @@ def roster(team_code: str):
 @app.get("/player/{player_id}")
 def player(player_id: str):
     return get_player(player_id)
+
+
+@app.get("/players/all")
+def all_players():
+    global _players_cache, _players_cache_time
+
+    # Return cached result if fresh
+    if _players_cache is not None and _players_cache_time is not None:
+        if datetime.now() - _players_cache_time < CACHE_DURATION:
+            return _players_cache
+
+    team_codes = ["g", "t", "db", "c", "s", "d", "h", "f", "b", "e", "l", "m"]
+    result = []
+    for code in team_codes:
+        roster = get_roster(code)
+        for section in ["pitchers", "catchers", "infielders", "outfielders"]:
+            for player in roster[section]:
+                if player["player_id"]:
+                    result.append(
+                        {
+                            "player_id": player["player_id"],
+                            "number": player["number"],
+                            "name": player["name"],
+                            "team": roster["team"],
+                            "team_code": code,
+                            "position": player["position"],
+                        }
+                    )
+
+    _players_cache = result
+    _players_cache_time = datetime.now()
+    return result
 
 
 # @app.get("/debug2/player/{player_id}")
