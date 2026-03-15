@@ -564,9 +564,16 @@ def get_box_score(season: int, game_id: str) -> dict:
                     name_td = row.select_one("td.gmbatter, td.gmnxtbatter")
                     cells = row.find_all("td")
                     if name_td and len(cells) >= 7:
+                        name_link = cells[0].find("a")
+                        player_id = (
+                            name_link["href"].split("/")[-1].replace(".html", "")
+                            if name_link
+                            else ""
+                        )
                         batters.append(
                             {
                                 "name": cells[0].text.strip(),
+                                "player_id": player_id,
                                 "ab": cells[1].text.strip(),
                                 "h": cells[2].text.strip(),
                                 "rbi": cells[3].text.strip(),
@@ -585,6 +592,12 @@ def get_box_score(season: int, game_id: str) -> dict:
                     name_td = row.select_one("td.gmpitcher")
                     cells = row.find_all("td")
                     if name_td and len(cells) >= 9:
+                        name_link = cells[0].find("a")
+                        player_id = (
+                            name_link["href"].split("/")[-1].replace(".html", "")
+                            if name_link
+                            else ""
+                        )
                         ip_whole = cells[1].text.strip()
                         ip_frac = cells[2].text.strip()
                         ip = (
@@ -595,6 +608,7 @@ def get_box_score(season: int, game_id: str) -> dict:
                         pitchers.append(
                             {
                                 "name": cells[0].text.strip(),
+                                "player_id": player_id,
                                 "ip": ip,
                                 "bf": cells[3].text.strip(),
                                 "h": cells[4].text.strip(),
