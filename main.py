@@ -1042,6 +1042,98 @@ def get_player(player_id: str) -> dict:
         }
 
 
+def get_team_info(team_code: str) -> dict:
+    try:
+        url = f"https://npb.jp/bis/eng/teams/index_{team_code}.html"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Team name — second h1 on page
+        team_name = ""
+        h1_tags = soup.select("h1")
+        if len(h1_tags) >= 2:
+            team_name = h1_tags[1].text.strip()
+        elif h1_tags:
+            team_name = h1_tags[0].text.strip()
+
+        # Website URL
+        website = ""
+        for a in soup.select("a[href]"):
+            href = a.get("href", "")
+            if "jump_" in href and team_code in href:
+                website = f"https://npb.jp{href}" if href.startswith("/") else href
+                break
+
+        # History name and stadium name — first div is history, second is stadium
+        teinfdtl_divs = soup.select("div.teinfdtl")
+        history_name = teinfdtl_divs[0].text.strip() if len(teinfdtl_divs) > 0 else ""
+        stadium_name = teinfdtl_divs[1].text.strip() if len(teinfdtl_divs) > 1 else ""
+
+        # Stadium address
+        stadium_address = ""
+        for td in soup.select("td.teinfttl"):
+            if "Address" in td.text:
+                next_td = td.find_next_sibling("td")
+                if next_td:
+                    stadium_address = next_td.text.strip()
+
+        # Championships — find Team History h2 then parse the content table
+        # Get all dt/dd children of the main dl
+        main_dl = soup.select("dl")[4]
+        children = [c for c in main_dl.children if c.name in ["dt", "dd"]]
+
+        cl_championships = ""
+        japan_championships = ""
+
+        for i, child in enumerate(children):
+            if child.name == "dt" and "Team History" in child.text:
+                # The next sibling dd contains the history content
+                if i + 1 < len(children):
+                    history_dd = children[i + 1]
+                    for row in history_dd.select("tr"):
+                        label_td = row.select_one("td.teinfttl")
+                        if not label_td:
+                            continue
+                        label = label_td.text.strip()
+                        count_td = row.select_one("td.teinfnum")
+                        count = count_td.text.strip() if count_td else ""
+                        years_tds = row.select("td.teinfdtl")
+                        years = years_tds[-1].text.strip() if years_tds else ""
+                        if "Central League Champions" in label:
+                            cl_championships = f"{count} — {years}"
+                        elif "Pacific League Champions" in label:
+                            cl_championships = f"{count} — {years}"
+                        elif "Nippon Champions" in label:
+                            japan_championships = f"{count} — {years}"
+
+        return {
+            "team_code": team_code,
+            "team_name": team_name,
+            "history_name": history_name,
+            "website": website,
+            "cl_championships": cl_championships,
+            "japan_championships": japan_championships,
+            "stadium_name": stadium_name,
+            "stadium_address": stadium_address,
+        }
+
+    except Exception as e:
+        print(f"Error getting team info for {team_code}: {e}")
+        return {
+            "team_code": team_code,
+            "team_name": "",
+            "history_name": "",
+            "website": "",
+            "cl_championships": "",
+            "japan_championships": "",
+            "stadium_name": "",
+            "stadium_address": "",
+        }
+
+
 # ✅ Routes defined AFTER
 @app.get("/standings")
 def standings_current():
@@ -1141,6 +1233,11 @@ def all_players():
     return result
 
 
+@app.get("/team/{team_code}")
+def team_info(team_code: str):
+    return get_team_info(team_code)
+
+
 # @app.get("/debug2/player/{player_id}")
 # def debug2_player(player_id: str):
 #     url = f"https://npb.jp/bis/eng/players/{player_id}.html"
@@ -1154,3 +1251,41 @@ def all_players():
 #     for i, table in enumerate(tables):
 #         result.append({"index": i, "html": str(table)[:500]})
 #     return {"table_count": len(tables), "tables": result}
+
+
+@app.get("/debug/team/{team_code}")
+def debug_team(team_code: str):
+    url = f"https://npb.jp/bis/eng/teams/index_{team_code}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    response = requests.get(url, headers=headers, timeout=10)
+    soup = BeautifulSoup(response.content, "html.parser")
+
+    return {
+        "all_dl_count": len(soup.select("dl")),
+        "all_dt_texts": [dt.text.strip() for dt in soup.select("dt")],
+        "all_h1_texts": [h1.text.strip() for h1 in soup.select("h1")],
+        "all_h2_texts": [h2.text.strip() for h2 in soup.select("h2")],
+        "all_table_count": len(soup.select("table")),
+        "first_dl_html": (
+            str(soup.select_one("dl"))[:1000] if soup.select_one("dl") else "none"
+        ),
+    }
+
+
+@app.get("/debug2/team/{team_code}")
+def debug2_team(team_code: str):
+    url = f"https://npb.jp/bis/eng/teams/index_{team_code}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    response = requests.get(url, headers=headers, timeout=10)
+    soup = BeautifulSoup(response.content, "html.parser")
+
+    main_dl = soup.select("dl")[4]
+    children = [c for c in main_dl.children if c.name in ["dt", "dd"]]
+
+    for i, child in enumerate(children):
+        if child.name == "dt" and "Team History" in child.text:
+            history_dd = children[i + 1]
+            rows = history_dd.select("tr")
+            # Return first 3 rows full HTML
+            return {"row_count": len(rows), "rows": [str(row) for row in rows[:5]]}
+    return {"error": "not found"}
