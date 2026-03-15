@@ -573,7 +573,6 @@ def get_box_score(season: int, game_id: str) -> dict:
                         batters.append(
                             {
                                 "name": cells[0].text.strip(),
-                                "player_id": player_id,
                                 "ab": cells[1].text.strip(),
                                 "h": cells[2].text.strip(),
                                 "rbi": cells[3].text.strip(),
@@ -608,7 +607,6 @@ def get_box_score(season: int, game_id: str) -> dict:
                         pitchers.append(
                             {
                                 "name": cells[0].text.strip(),
-                                "player_id": player_id,
                                 "ip": ip,
                                 "bf": cells[3].text.strip(),
                                 "h": cells[4].text.strip(),
