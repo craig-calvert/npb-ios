@@ -1134,6 +1134,123 @@ def get_team_info(team_code: str) -> dict:
         }
 
 
+def get_team_schedule(team_code: str, month: str) -> dict:
+    try:
+        url = f"https://npb.jp/bis/eng/teams/calendar_{team_code}_{month}.html"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+
+        # Title
+        title = ""
+        for td in soup.select("td"):
+            if (
+                "Calendar" in td.text
+                and "2026" in td.text
+                and len(td.text.strip()) < 50
+            ):
+                title = td.text.strip()
+                break
+
+        # Use table.tetblmain
+        cal_table = soup.select_one("table.tetblmain")
+        if not cal_table:
+            return {
+                "team_code": team_code,
+                "month": month,
+                "title": title,
+                "games": [],
+                "days": [],
+            }
+
+        tc = team_code.upper()
+        # DB is special case
+        if team_code == "db":
+            tc = "DB"
+
+        days = []
+        for cell in cal_table.select("td.teschedule"):
+            day_div = cell.select_one("div.teschedate")
+            day = day_div.text.strip() if day_div else ""
+            if not day:
+                continue
+
+            game = None
+            vs_div = cell.select_one("div.tevsteam")
+            if vs_div:
+                score_div = vs_div.select_one("div.tescore")
+                venue_div = vs_div.select_one("div.testdm")
+                time_div = vs_div.select_one("div.tetime")
+
+                matchup = score_div.text.strip() if score_div else ""
+                venue = venue_div.text.strip().strip("()") if venue_div else ""
+                time = time_div.text.strip() if time_div else ""
+
+                # Parse home/away
+                is_home = False
+                opponent = ""
+                if " - " in matchup:
+                    parts = matchup.split(" - ")
+                    home_code = parts[0].strip()
+                    away_code = parts[1].strip()
+                    is_home = home_code == tc
+                    opponent = away_code if is_home else home_code
+
+                # Check for score link (past games)
+                game_id = ""
+                score_link = vs_div.select_one("a")
+                if score_link and score_link.get("href"):
+                    href = score_link["href"]
+                    game_id = href.split("/")[-1].replace(".html", "")
+
+                # Check for actual score
+                score_text = score_div.text.strip() if score_div else ""
+                home_score = ""
+                away_score = ""
+                # Score format changes to "3 - 5" when game is played
+                if score_text and all(c.isdigit() or c in " -" for c in score_text):
+                    score_parts = score_text.split(" - ")
+                    if len(score_parts) == 2:
+                        home_score = score_parts[0].strip()
+                        away_score = score_parts[1].strip()
+
+                game = {
+                    "opponent": opponent,
+                    "is_home": is_home,
+                    "venue": venue,
+                    "time": time,
+                    "game_id": game_id,
+                    "home_score": home_score,
+                    "away_score": away_score,
+                    "matchup": matchup,
+                }
+
+            days.append(
+                {
+                    "day": day,
+                    "game": game,
+                }
+            )
+
+        return {
+            "team_code": team_code,
+            "month": month,
+            "title": title,
+            "days": days,
+        }
+
+    except Exception as e:
+        print(f"Error getting team schedule for {team_code}/{month}: {e}")
+        return {
+            "team_code": team_code,
+            "month": month,
+            "title": "",
+            "days": [],
+        }
+
+
 # ✅ Routes defined AFTER
 @app.get("/standings")
 def standings_current():
@@ -1238,6 +1355,11 @@ def team_info(team_code: str):
     return get_team_info(team_code)
 
 
+@app.get("/team/schedule/{team_code}/{month}")
+def team_schedule(team_code: str, month: str):
+    return get_team_schedule(team_code, month)
+
+
 # @app.get("/debug2/player/{player_id}")
 # def debug2_player(player_id: str):
 #     url = f"https://npb.jp/bis/eng/players/{player_id}.html"
@@ -1289,3 +1411,26 @@ def debug2_team(team_code: str):
             # Return first 3 rows full HTML
             return {"row_count": len(rows), "rows": [str(row) for row in rows[:5]]}
     return {"error": "not found"}
+
+
+@app.get("/debug/team/schedule/{team_code}/{month}")
+def debug_team_schedule(team_code: str, month: str):
+    url = f"https://npb.jp/bis/eng/teams/calendar_{team_code}_{month}.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    response = requests.get(url, headers=headers, timeout=10)
+    soup = BeautifulSoup(response.content, "html.parser")
+
+    # Look at table index 2 - tetblmain
+    table = soup.select("table")[2]
+    cells = table.select("td")
+    result = []
+    for i, cell in enumerate(cells[:20]):
+        result.append(
+            {
+                "index": i,
+                "class": cell.get("class", ""),
+                "text": cell.text.strip()[:200],
+                "html": str(cell)[:300],
+            }
+        )
+    return result
