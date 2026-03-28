@@ -127,82 +127,59 @@ def get_schedule(year: int, month: int) -> list:
 
 
 def get_schedule_by_date(year: int, month: int, day: int) -> list:
-    """Get schedule for a specific date"""
     try:
-        # Try new URL pattern first
         url = f"https://npb.jp/bis/eng/{year}/games/gm{year}{month:02d}{day:02d}.html"
         headers = {
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
         }
         response = requests.get(url, headers=headers)
-
-        # If not found, return empty
-        if response.status_code != 200:
-            print(f"Page not found: {url}")
-            return []
-
         soup = BeautifulSoup(response.content, "html.parser")
+
         results = []
 
-        # Get the date
+        # Date
         date_tag = soup.select_one("h4.the_game_on_day span")
         date_str = (
             date_tag.text.strip() if date_tag else f"{year}-{month:02d}-{day:02d}"
         )
 
-        # Find all game units
-        game_units = soup.select("div.game_result span.link_box div.unit")
+        # Each game is an a.link_box
+        for game_link in soup.select("a.link_box"):
+            href = game_link.get("href", "")
+            game_id = href.split("/")[-1].replace(".html", "") if href else ""
 
-        for game_unit in game_units:
-            # Get team information
-            team_left = game_unit.select_one("div.team_left")
-            team_right = game_unit.select_one("div.team_right")
-            round_info = game_unit.select_one("div.round")
+            home_team = ""
+            away_team = ""
+            home_runs = ""
+            away_runs = ""
+            venue = ""
+            game_number = ""
 
-            if not (team_left and team_right and round_info):
-                continue
+            team_left = game_link.select_one("div.team_left div.team_name")
+            team_right = game_link.select_one("div.team_right div.team_name")
+            score_left = game_link.select_one("div.score_text.score_left")
+            score_right = game_link.select_one("div.score_text.score_right")
+            round_div = game_link.select_one("div.round")
 
-            # Extract team names
-            home_team = team_left.select_one("div.team_name")
-            away_team = team_right.select_one("div.team_name")
+            home_team = team_left.text.strip() if team_left else ""
+            away_team = team_right.text.strip() if team_right else ""
+            home_runs = score_left.text.strip() if score_left else ""
+            away_runs = score_right.text.strip() if score_right else ""
 
-            if not (home_team and away_team):
-                continue
-
-            # Extract scores (may be empty for future games)
-            home_score = team_left.select_one("div.score_text")
-            away_score = team_right.select_one("div.score_text")
-
-            # Extract venue and time from round div
-            round_text = round_info.get_text(separator="|", strip=True)
-            round_parts = round_text.split("|")
-            venue = round_parts[0] if len(round_parts) > 0 else ""
-            game_time = round_parts[1] if len(round_parts) > 1 else ""
-
-            # Try to extract game ID from parent link
-            game_id = ""
-            link_box = game_unit.find_parent("span", class_="link_box")
-            if link_box:
-                # Check if link_box is actually an <a> tag
-                if link_box.name == "a":
-                    href = link_box.get("href", "")
-                else:
-                    # Look for <a> tag wrapping the link_box
-                    parent_a = link_box.find_parent("a")
-                    href = parent_a.get("href", "") if parent_a else ""
-
-                if href:
-                    game_id = href.split("/")[-1].replace(".html", "")
+            if round_div:
+                round_parts = round_div.get_text(separator="\n").strip().split("\n")
+                game_number = round_parts[0].strip() if round_parts else ""
+                venue = round_parts[1].strip() if len(round_parts) > 1 else ""
 
             results.append(
                 {
                     "date": date_str,
-                    "home_team": home_team.text.strip(),
-                    "away_team": away_team.text.strip(),
-                    "home_runs": home_score.text.strip() if home_score else "",
-                    "away_runs": away_score.text.strip() if away_score else "",
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "home_runs": home_runs,
+                    "away_runs": away_runs,
                     "venue": venue,
-                    "game_time": game_time,
+                    "game_number": game_number,
                     "game_id": game_id,
                 }
             )
@@ -1467,19 +1444,13 @@ def debug_team_schedule(team_code: str, month: str):
 
 @app.get("/debug/schedule/{year}/{month}/{day}")
 def debug_schedule(year: int, month: int, day: int):
-    urls = [
-        f"https://npb.jp/bis/eng/{year}/gm{year}{month:02d}{day:02d}.html",
-        f"https://npb.jp/bis/eng/{year}/games/gm{year}{month:02d}{day:02d}.html",
-    ]
+    url = f"https://npb.jp/bis/eng/{year}/games/gm{year}{month:02d}{day:02d}.html"
     headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
-    results = []
-    for url in urls:
-        response = requests.get(url, headers=headers)
-        results.append(
-            {
-                "url": url,
-                "status": response.status_code,
-                "content_preview": response.text[:200],
-            }
-        )
-    return results
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.content, "html.parser")
+
+    games_div = soup.select_one("div.contents.games")
+    return {
+        "status": response.status_code,
+        "games_div_html": str(games_div)[:3000] if games_div else "none",
+    }
