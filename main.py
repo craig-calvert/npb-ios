@@ -16,43 +16,71 @@ CACHE_DURATION = timedelta(hours=6)
 
 
 # ✅ Function defined FIRST
+def season_has_data(season: int) -> bool:
+    url = f"https://npb.jp/bis/eng/{season}/stats/std_c.html"
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        return response.status_code == 200 and "Standings" in response.text
+    except:
+        return False
+
+
 def get_standings(season: int = 2026) -> dict:
     try:
-        url = f"https://npb.jp/bis/eng/{season}/standings/index.html"
         headers = {
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
         }
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.content, "html.parser")
-
         result = {}
-        for table in soup.select("table.standings"):
-            cl_header = table.find("td", class_="standingsHeadCl")
-            pl_header = table.find("td", class_="standingsHeadPl")
 
-            if cl_header:
-                league = "Central League"
-            elif pl_header:
-                league = "Pacific League"
-            else:
-                continue
+        for league_code, league_name in [
+            ("c", "Central League"),
+            ("p", "Pacific League"),
+        ]:
+            url = f"https://npb.jp/bis/eng/{season}/stats/std_{league_code}.html"
+            response = requests.get(url, headers=headers, timeout=10)
+            soup = BeautifulSoup(response.content, "html.parser")
 
             teams = []
-            for row in table.select("td.standingsTeam"):
-                tr = row.parent
-                cells = tr.find_all("td")
-                teams.append(
-                    {
-                        "team": cells[0].text.strip(),
-                        "games": int(cells[1].text.strip()),
-                        "wins": int(cells[2].text.strip()),
-                        "losses": int(cells[3].text.strip()),
-                        "ties": int(cells[4].text.strip()),
-                        "pct": cells[5].text.strip(),
-                        "gb": cells[6].text.strip(),
-                    }
-                )
-            result[league] = teams
+            # Find the standings table
+            table = soup.select_one("table")
+            if table:
+                for row in table.select("tr")[1:]:  # skip header
+                    cells = row.find_all("td")
+                    if len(cells) < 6:
+                        continue
+                    team_name = cells[0].text.strip()
+                    if not team_name:
+                        continue
+                    teams.append(
+                        {
+                            "team": team_name,
+                            "games": (
+                                int(cells[1].text.strip())
+                                if cells[1].text.strip().isdigit()
+                                else 0
+                            ),
+                            "wins": (
+                                int(cells[2].text.strip())
+                                if cells[2].text.strip().isdigit()
+                                else 0
+                            ),
+                            "losses": (
+                                int(cells[3].text.strip())
+                                if cells[3].text.strip().isdigit()
+                                else 0
+                            ),
+                            "ties": (
+                                int(cells[4].text.strip())
+                                if cells[4].text.strip().isdigit()
+                                else 0
+                            ),
+                            "pct": cells[5].text.strip(),
+                            "gb": cells[6].text.strip() if len(cells) > 6 else "--",
+                        }
+                    )
+            result[league_name] = teams
+
         return result
     except Exception as e:
         print(f"Error getting standings for {season}: {e}")
@@ -652,17 +680,6 @@ def get_box_score(season: int, game_id: str) -> dict:
             "batting": [],
             "pitching": [],
         }
-
-
-def season_has_data(season: int) -> bool:
-    """Check if a season has data available on npb.jp"""
-    url = f"https://npb.jp/bis/eng/{season}/standings/index.html"
-    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
-    try:
-        response = requests.get(url, headers=headers, timeout=5)
-        return response.status_code == 200 and "standings" in response.text.lower()
-    except:
-        return False
 
 
 def get_roster(team_code: str) -> dict:
