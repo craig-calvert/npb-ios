@@ -172,7 +172,7 @@ def get_schedule_by_date(year: int, month: int, day: int) -> list:
         )
 
         # Each game is an a.link_box
-        for game_link in soup.select("a.link_box"):
+        for game_link in soup.select("a.link_box, span.link_box"):
             href = game_link.get("href", "")
             game_id = href.split("/")[-1].replace(".html", "") if href else ""
 
@@ -196,8 +196,18 @@ def get_schedule_by_date(year: int, month: int, day: int) -> list:
 
             if round_div:
                 round_parts = round_div.get_text(separator="\n").strip().split("\n")
-                game_number = round_parts[0].strip() if round_parts else ""
-                venue = round_parts[1].strip() if len(round_parts) > 1 else ""
+                round_parts = [p.strip() for p in round_parts if p.strip()]
+
+                # Check if first part looks like a game number (contains "Game")
+                if round_parts and "Game" in round_parts[0]:
+                    game_number = round_parts[0]
+                    venue = round_parts[1] if len(round_parts) > 1 else ""
+                    time = round_parts[2] if len(round_parts) > 2 else ""
+                else:
+                    # Future game format: venue then time
+                    game_number = ""
+                    venue = round_parts[0] if round_parts else ""
+                    time = round_parts[1] if len(round_parts) > 1 else ""
 
             results.append(
                 {
@@ -207,6 +217,7 @@ def get_schedule_by_date(year: int, month: int, day: int) -> list:
                     "home_runs": home_runs,
                     "away_runs": away_runs,
                     "venue": venue,
+                    "time": time,
                     "game_number": game_number,
                     "game_id": game_id,
                 }
@@ -1383,82 +1394,6 @@ def team_schedule(team_code: str, month: str):
     return get_team_schedule(team_code, month)
 
 
-# @app.get("/debug2/player/{player_id}")
-# def debug2_player(player_id: str):
-#     url = f"https://npb.jp/bis/eng/players/{player_id}.html"
-#     headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
-#     response = requests.get(url, headers=headers, timeout=10)
-#     soup = BeautifulSoup(response.content, "html.parser")
-
-#     # Dump all tables and their contents
-#     tables = soup.select("table")
-#     result = []
-#     for i, table in enumerate(tables):
-#         result.append({"index": i, "html": str(table)[:500]})
-#     return {"table_count": len(tables), "tables": result}
-
-
-@app.get("/debug/team/{team_code}")
-def debug_team(team_code: str):
-    url = f"https://npb.jp/bis/eng/teams/index_{team_code}.html"
-    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
-    response = requests.get(url, headers=headers, timeout=10)
-    soup = BeautifulSoup(response.content, "html.parser")
-
-    return {
-        "all_dl_count": len(soup.select("dl")),
-        "all_dt_texts": [dt.text.strip() for dt in soup.select("dt")],
-        "all_h1_texts": [h1.text.strip() for h1 in soup.select("h1")],
-        "all_h2_texts": [h2.text.strip() for h2 in soup.select("h2")],
-        "all_table_count": len(soup.select("table")),
-        "first_dl_html": (
-            str(soup.select_one("dl"))[:1000] if soup.select_one("dl") else "none"
-        ),
-    }
-
-
-@app.get("/debug2/team/{team_code}")
-def debug2_team(team_code: str):
-    url = f"https://npb.jp/bis/eng/teams/index_{team_code}.html"
-    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
-    response = requests.get(url, headers=headers, timeout=10)
-    soup = BeautifulSoup(response.content, "html.parser")
-
-    main_dl = soup.select("dl")[4]
-    children = [c for c in main_dl.children if c.name in ["dt", "dd"]]
-
-    for i, child in enumerate(children):
-        if child.name == "dt" and "Team History" in child.text:
-            history_dd = children[i + 1]
-            rows = history_dd.select("tr")
-            # Return first 3 rows full HTML
-            return {"row_count": len(rows), "rows": [str(row) for row in rows[:5]]}
-    return {"error": "not found"}
-
-
-@app.get("/debug/team/schedule/{team_code}/{month}")
-def debug_team_schedule(team_code: str, month: str):
-    url = f"https://npb.jp/bis/eng/teams/calendar_{team_code}_{month}.html"
-    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"}
-    response = requests.get(url, headers=headers, timeout=10)
-    soup = BeautifulSoup(response.content, "html.parser")
-
-    # Look at table index 2 - tetblmain
-    table = soup.select("table")[2]
-    cells = table.select("td")
-    result = []
-    for i, cell in enumerate(cells[:20]):
-        result.append(
-            {
-                "index": i,
-                "class": cell.get("class", ""),
-                "text": cell.text.strip()[:200],
-                "html": str(cell)[:300],
-            }
-        )
-    return result
-
-
 @app.get("/debug/schedule/{year}/{month}/{day}")
 def debug_schedule(year: int, month: int, day: int):
     url = f"https://npb.jp/bis/eng/{year}/games/gm{year}{month:02d}{day:02d}.html"
@@ -1466,8 +1401,15 @@ def debug_schedule(year: int, month: int, day: int):
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.content, "html.parser")
 
-    games_div = soup.select_one("div.contents.games")
     return {
         "status": response.status_code,
-        "games_div_html": str(games_div)[:3000] if games_div else "none",
+        "link_boxes": len(soup.select("a.link_box")),
+        "all_divs": [
+            {"class": d.get("class", "")} for d in soup.select("div.unit")[:5]
+        ],
+        "games_div_html": (
+            str(soup.select_one("div#league_info_wrapper"))[:2000]
+            if soup.select_one("div#league_info_wrapper")
+            else "none"
+        ),
     }
